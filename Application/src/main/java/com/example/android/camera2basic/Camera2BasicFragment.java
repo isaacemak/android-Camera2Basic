@@ -71,6 +71,9 @@ import java.util.List;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
+import curi.ImageProcessor;
+import curi.gui.DrawRectView;
+
 public class Camera2BasicFragment extends Fragment
         implements View.OnClickListener, FragmentCompat.OnRequestPermissionsResultCallback {
 
@@ -156,6 +159,9 @@ public class Camera2BasicFragment extends Fragment
 
     };
 
+
+    DrawRectView drawRectView= null;
+
     /**
      * ID of the current {@link CameraDevice}.
      */
@@ -217,17 +223,18 @@ public class Camera2BasicFragment extends Fragment
     /**
      * An additional thread for running tasks that shouldn't block the UI.
      */
-    private HandlerThread mBackgroundThread;
+    private HandlerThread mBackgroundThread, iBackgroundThread;
 
     /**
      * A {@link Handler} for running tasks in the background.
      */
-    private Handler mBackgroundHandler;
+    private Handler mBackgroundHandler, iBackgroundHandler;
 
     /**
      * An {@link ImageReader} that handles still image capture.
      */
-    private ImageReader mImageReader;
+    private ImageReader mImageReader, iImageReader;
+
 
     /**
      * This is the output file for our picture.
@@ -429,6 +436,8 @@ public class Camera2BasicFragment extends Fragment
         view.findViewById(R.id.picture).setOnClickListener(this);
         view.findViewById(R.id.info).setOnClickListener(this);
         mTextureView = (AutoFitTextureView) view.findViewById(R.id.texture);
+        drawRectView= (DrawRectView) view.findViewById(R.id.drawRect);
+
     }
 
     @Override
@@ -451,6 +460,7 @@ public class Camera2BasicFragment extends Fragment
         } else {
             mTextureView.setSurfaceTextureListener(mSurfaceTextureListener);
         }
+
     }
 
     @Override
@@ -516,6 +526,31 @@ public class Camera2BasicFragment extends Fragment
                         ImageFormat.JPEG, /*maxImages*/2);
                 mImageReader.setOnImageAvailableListener(
                         mOnImageAvailableListener, mBackgroundHandler);
+
+                final int iWidth= getResources().getInteger(R.integer.scaled_width);
+                final int iHeight= getResources().getInteger(R.integer.scaled_height);
+                iImageReader= ImageReader.newInstance(iWidth, iHeight, ImageFormat.YUV_420_888, 5);
+                iImageReader.setOnImageAvailableListener(new ImageReader.OnImageAvailableListener() {
+                    @Override
+                    public void onImageAvailable(ImageReader imageReader) {
+                        Image image= imageReader.acquireNextImage();
+                        ByteBuffer y= image.getPlanes()[0].getBuffer();
+                        byte[] data= new byte[y.remaining()];
+                        y.get(data);
+                        ImageProcessor.deal(data, iWidth, iHeight);
+                        image.close();
+
+
+                        drawRectView.drawRect(new int[]{0, 0, 320, 240},
+                                getResources().getInteger(R.integer.scaled_width),  getResources().getInteger(R.integer.scaled_height),
+                                mTextureView.getWidth(), mTextureView.getHeight());
+
+                        drawRectView.set_scaled_surface_size(getResources().getInteger(R.integer.scaled_width),  getResources().getInteger(R.integer.scaled_height),
+                                mTextureView.getWidth(), mTextureView.getHeight());
+                        drawRectView.drawRect(new int[]{150, 150, 170, 170});
+
+                    }
+                }, iBackgroundHandler);
 
                 // Find out if we need to swap dimension to get the preview size relative to sensor
                 // coordinate.
@@ -651,8 +686,12 @@ public class Camera2BasicFragment extends Fragment
      */
     private void startBackgroundThread() {
         mBackgroundThread = new HandlerThread("CameraBackground");
+        iBackgroundThread = new HandlerThread("CameraBackground2");
+        iBackgroundThread.start();
         mBackgroundThread.start();
         mBackgroundHandler = new Handler(mBackgroundThread.getLooper());
+        iBackgroundHandler = new Handler(iBackgroundThread.getLooper());
+
     }
 
     /**
@@ -660,10 +699,15 @@ public class Camera2BasicFragment extends Fragment
      */
     private void stopBackgroundThread() {
         mBackgroundThread.quitSafely();
+        iBackgroundThread.quitSafely();
         try {
             mBackgroundThread.join();
             mBackgroundThread = null;
             mBackgroundHandler = null;
+            iBackgroundThread.join();
+            iBackgroundThread = null;
+            iBackgroundHandler = null;
+
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
@@ -687,9 +731,10 @@ public class Camera2BasicFragment extends Fragment
             mPreviewRequestBuilder
                     = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
             mPreviewRequestBuilder.addTarget(surface);
+            mPreviewRequestBuilder.addTarget(iImageReader.getSurface());
 
             // Here, we create a CameraCaptureSession for camera preview.
-            mCameraDevice.createCaptureSession(Arrays.asList(surface, mImageReader.getSurface()),
+            mCameraDevice.createCaptureSession(Arrays.asList(iImageReader.getSurface(), surface, mImageReader.getSurface()),
                     new CameraCaptureSession.StateCallback() {
 
                         @Override
